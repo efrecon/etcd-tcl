@@ -1,7 +1,7 @@
 # etcd-tcl
 
-etcd-tcl is an implementation of the etcd[1] API[2] v. 2 in Tcl.  The
-library provides for a nearly complete implementation of the API.
+etcd-tcl is an implementation of the [etcd][1] [API][2] v. 2 in Tcl.
+The library provides for a nearly complete implementation of the API.
 etcd-tcl is self-contained and comes with its own JSON parser, a fork
 of the excellent parser that is [part of jimhttp][3].
 
@@ -48,7 +48,9 @@ options, so this could actually be shortened to `set cx
 All the following examples supposes that the variable `cx` holds a
 token that has been returned by `::etcd::new`.
 
-### Write a key
+### Key Operations
+
+#### Write a Key
 
 The following would create (or update) the key `/onedir/onekey` to the
 string `hello the world`.  If existent, the procedure returns the
@@ -60,4 +62,84 @@ To write a key and associate a ttl to it, call it as follows:
 
     ::etcd::write $cx "/onedir/onekey" "Short lived value" ttl 5
 
+#### Read a Key
 
+The following would read back the content of the key:
+
+    set val [::etcd::read $cx "/onedir/onekey"]
+
+#### Delete a Key
+
+To delete a single key (but not a directory), call `::etcd::delete` as
+follows:
+
+    ::etcd::delete $cx "/onedir/onekey"
+
+### Directory Operations
+
+#### Create a Directory
+
+To create a directory do something similar to the following example:
+
+    ::etcd::mkdir $cx "/onedir/subdir"
+
+#### List directory Content
+
+Assuming you have run the example command from just above, we start by
+(re)creating a key in the directory, just to make this a better
+example:
+
+    ::etcd::write $cx "/onedir/onekey" "hello"
+
+To list the content of a directory, use the following:
+
+    set content [::etcd::glob $cx "/onedir"]
+
+`content` would then contain a representation of the directory and its
+direct content where entries are desribed in triplets:
+
+1. The first item contains the full path to the directory entry.
+2. The second item contains a boolean: 1 if the entry is a directory
+   itself, 0 if the entry is a key instead.
+3. The third item contains the value of the key if the entry was a key
+   (or an empty string if the entry was a directory).
+
+In other words, in our example, `content` would be set to the following:
+
+    /onedir 1 {} /onedir/subdir 1 {} /onedir/onekey 0 hello
+
+To recurse through directories, just add a boolean requesting for
+recursion to the call, e.g.
+
+    set content [::etcd::glob $cx "/" 1]
+
+Finally, the procedure is called `glob`, so it also accepts a matching
+pattern to select only entries which names match.  So for example, the
+command below
+
+    set content [::etcd::glob $cx "/onedir" 0 "sub*"]
+
+would return a single triplet, since there is only one entry which
+name matches `sub*` in the directory, e.g.:
+
+    /onedir/subdir 1 {}
+
+#### Remove a Directory
+
+To remove an empty directory, do as follows:
+
+    ::etcd::rmdir $cx "/onedir/subdir"
+
+And to remote a directory recursively, i.e. the whole tree starting at
+that directory, call it as follows:
+
+    ::etcd::rmdir $cx "/onedir" 1
+
+### Cluster Information
+
+The following two self-explanatory examples would respectively return
+the URL to the leader of the cluster and list of machines bound to the
+cluster:
+
+    set leader [::etcd::leader $cx]
+    set machines [::etcd::machines $cx]
