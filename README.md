@@ -91,6 +91,8 @@ example:
 
     ::etcd::write $cx "/onedir/onekey" "hello"
 
+##### Simple Listing
+
 To list the content of a directory, use the following:
 
     set content [::etcd::glob $cx "/onedir"]
@@ -108,10 +110,14 @@ In other words, in our example, `content` would be set to the following:
 
     /onedir 1 {} /onedir/subdir 1 {} /onedir/onekey 0 hello
 
+##### Recursion
+
 To recurse through directories, just add a boolean requesting for
 recursion to the call, e.g.
 
     set content [::etcd::glob $cx "/" 1]
+
+##### Globbing
 
 Finally, the procedure is called `glob`, so it also accepts a matching
 pattern to select only entries which names match.  So for example, the
@@ -143,3 +149,62 @@ cluster:
 
     set leader [::etcd::leader $cx]
     set machines [::etcd::machines $cx]
+
+
+## Advanced Usage
+
+The procedures `::etcd::read`, `::etcd::write` and `::etcd::delete`
+takes more arguments than the ones that have been covered in the
+previous section.  In fact, they take any number of arguments, and
+this unbound argument list carries both options to modify the
+behaviour of the procedure, but also arguments that will be sent to
+the remote `etcd` server as part of the HTTP query.  How the
+difference between options and API arguments is made is described
+below.
+
+Everything that comes prior to the double-dash sign, i.e. `--`
+consists of a number of dash-led options, with or without values.
+These options are meant to change the behaviour of the procedure.
+Everything that comes after `--` forms a list of arguments and values
+that will form the HTTP query of the API call to the remote `etcd`
+server.
+
+The `--` is optional, in which case, options will be parsed and
+removed from the whole list and what remains will be the arguments and
+values to be sent to the remote `etcd` server.  In that case, you may
+encounter problems if one of the arguments or values starts with a
+dash and could be understood as a procedure option instead.
+
+All three procedures takes an option called `-raw`, which does not
+take any argument.  This option will prevent the procedure to attempt
+JSON parsing the response from `etcd`, returning the raw data directly
+instead.  In addition, `::etcd::write` takes an option called
+`-ignore` (or `-noval`, they are synonyms) that will not send the
+value.  This is meant to be used for directory creation.
+
+### Simple Example
+
+Given these options and mechanisms, and with knowledge of the [etcd
+API Documentation][2], instead of calling `::etcd::rmdir`, you could
+call `::etcd::delete` as follows:
+
+    ::etcd::delete $cx /onedir/subdir -raw dir true
+
+In fact this is exactly how the implementation of `::etcd::rmdir`
+looks like!
+
+### Advanced etcd API
+
+Based on these low-level behaviours, benefiting from the atomic
+compare and swap features of `etcd` is examplified below:
+
+    # Set value of /onedir/akey to 10 only if it was 0 before:
+    ::etcd::write /onedir/akey 10 prevValue 0
+
+    # Set value of /onedir/akey to 10 only if it did not exist before
+    ::etcd::write /onedir/akey 10 prevExists false
+
+    # Set value of /onedir/akey to 10 only if it was at version 102
+    ::etcd::write /onedir/akey 10 prevIndex 102
+
+
