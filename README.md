@@ -1,13 +1,16 @@
 # etcd-tcl
 
 etcd-tcl is an implementation of the [etcd][1] [API][2] v. 2 in Tcl.
-The library provides for a nearly complete implementation of the API.
-etcd-tcl is self-contained and comes with its own JSON parser, a fork
-of the excellent parser that is [part of jimhttp][3].
+The library originates from [biot][3], but was forked out since there
+was no etcd client implementation for Tcl.  It provides for a nearly
+complete implementation of the API.  etcd-tcl is self-contained and
+comes with its own JSON parser, a fork of the excellent parser that is
+[part of jimhttp][4].
 
   [1]: https://github.com/coreos/etcd
   [2]: https://coreos.com/docs/distributed-configuration/etcd-api/
-  [3]: https://github.com/dbohdan/jimhttp/blob/master/json.tcl
+  [3]: https://bitbucket.org/enbygg3/biot
+  [4]: https://github.com/dbohdan/jimhttp/blob/master/json.tcl
 
 
 # Installation
