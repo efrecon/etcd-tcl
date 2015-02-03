@@ -5,7 +5,8 @@ The library originates from [biot][3], but was forked out since there
 was no etcd client implementation for Tcl.  It provides for a nearly
 complete implementation of the API.  etcd-tcl is self-contained and
 comes with its own JSON parser, a fork of the excellent parser that is
-[part of jimhttp][4].
+[part of jimhttp][4].  The library has been tested both against etcd
+v0.4.6 and the latest official v2.0.
 
   [1]: https://github.com/coreos/etcd
   [2]: https://coreos.com/docs/distributed-configuration/etcd-api/
@@ -35,6 +36,9 @@ while other procedures relay those procedures with specific arguments.
 This is because the three procedure provide for a flexible calling
 convention that both allows for a simpler usage and open for more
 complex scenarios.
+
+The library implements an ensemble, so if you prefer, you can call,
+e.g. `etcd new` instead of `::etcd::new`.
 
 ## Simple Usage
 
@@ -211,3 +215,40 @@ compare and swap features of `etcd` is examplified below:
     ::etcd::write /onedir/akey 10 prevIndex 102
 
 
+## Introspection and Instrumentation
+
+### Verbosity and Logging
+
+The library supports a logging facility.  By default, all verbosity is
+turned off and the library will be silent.  Internally, verbosity is
+always an integer, the higher, the lesser important the message is.
+For convenience, string representations are provided, e.g. `CRITICAL`,
+`ERROR`, `WARN`, `NOTICE`, `INFO` and `DEBUG`.  These are case
+insensitive.  To access the current verbosity level, call:
+
+    ::etcd::verbosity
+
+To turn full debugging on, you would call the same procedure with an
+argument, e.g.:
+
+    ::etcd::verbosity DEBUG
+
+By default, log messages are timestamped and output onto `stderr`.
+However, you can call `::etcd::logger` with a command and this command
+will be called back with each message that would be output according
+to the current verbosity level.  The command takes an integer (the
+verbosity level) and a message as additional arguments.
+
+### Finding existing contexts
+
+The procedure `::etcd::find` can be used to return a list of matching
+(existing) contexts that would have been created by `::etcd::new`.
+For example, the following command would return the full list of all
+known contexts:
+
+    ::etcd::find
+
+While the command below would return all the contexts that are setup
+with the new IANA port:
+
+    ::etcd::find -port 2379
