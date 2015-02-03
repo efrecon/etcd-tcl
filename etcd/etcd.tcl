@@ -232,14 +232,14 @@ proc ::etcd::WebOp { cx op path args } {
 	if { $ncode >= 200 && $ncode < 300 } {
 	    # Anything that is 2XX is a success (201 is sometimes
 	    # returned for example).
-	    set C(lastData) [::http::data $tok]
+	    set C(lastData) [string trim [::http::data $tok]]
 	    ::http::cleanup $tok
 	    Log 6 "Received $ncode response: $C(lastData)"
 	    return $C(lastData)
 	} else {
 	    # Otherwise we have an error.
 	    set err [::http::error $tok]
-	    set C(lastData) [::http::data $tok]
+	    set C(lastData) [string trim [::http::data $tok]]
 	    Log 3 "Error; code: $ncode, error: $err, data: $C(lastData)"
 	    ::http::cleanup $tok
 	    set errMsg "Error when accessing $url: $err (code: $ncode)\
