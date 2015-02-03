@@ -25,8 +25,11 @@ namespace eval ::etcd {
 	    idGene         0
 	    idClamp        10000
 	    idFormat       7
+	    logd           stderr
+	    logger         ""
 	    version        "v2"
 	    verbose        0
+	    dateLogHeader  "\[%Y%m%d %H%M%S\] \[%level%\] "
 	    verboseTags    {1 CRITICAL 2 ERROR 3 WARN 4 NOTICE 5 INFO 6 DEBUG}
 	    -host          127.0.0.1
 	    -port          4001
@@ -34,231 +37,83 @@ namespace eval ::etcd {
 	    -timeout       30000
 	    -keepalive     on
 	}
-	variable version 0.2
+	variable version 0.3
 	variable libdir [file dirname [file normalize [info script]]]
     }
     namespace export {[a-z]*}
     namespace ensemble create
 }
 
-proc ::etcd::Log { lvl msg } {
+
+# ::etcd::new -- Create new connection context
+#
+#       Create a new connection context to a remote etcd server.  At
+#       present, there is no active attempt to connect to the server
+#       to check for capabilities or similar.  This procedure can take
+#       a number of dash-led options and their values as arguments.
+#       These options are:
+#       -host    The hostname of the remote server (default: localhost)
+#       -port    The port number at the remote server (default: 4001)
+#       -proto   http or https
+#       -timeout Timeout when talking to server, in ms. Negative to turn off.
+#
+# Arguments:
+#	args	List of dash-led options and their values, as described above.
+#
+# Results:
+#       Return the identifier of the connection context to be used in
+#       all further calls to this library.
+#
+# Side Effects:
+#       None.
+proc ::etcd::new { args } {
     variable ETCD
 
-    if { ![string is integer $lvl] } {
-	foreach {l str} [concat $ETCD(verboseTags) 0 *] {
-	    if { [string match -nocase $str $lvl] } {
-		set lvl $l
-		break
-	    }
-	}
-    }
-		
-    if { $ETCD(verbose) >= $lvl } {
-	array set T $ETCD(verboseTags)
-	if { [info exists T($lvl)] } {
-	    puts stderr "\[$T($lvl)\] $msg"
-	}
-    }
-}
-
-
-# ::etcd::GetOpt -- Quick and Dirty Options Parser
-#
-#       Parses options, code comes from wiki
-#
-# Arguments:
-#	_argv	"pointer" to options list to parse from
-#	name	Name of option to find
-#	_var	"pointer" to where to place the value
-#	deflt	Default value if not found
-#
-# Results:
-#       1 if the option was found, 0 otherwise.
-#
-# Side Effects:
-#       Modifies the argv option list.
-proc ::etcd::GetOpt {_argv name {_var ""} {deflt ""}} {
-    upvar $_argv argv $_var var
-    set pos [lsearch -regexp $argv ^$name]
-    if {$pos>=0} {
-	set to $pos
-	if {$_var ne ""} {
-	    set var [lindex $argv [incr to]]
-	}
-	set argv [lreplace $argv $pos $to]
-	return 1
-    } else {
-	# Did we provide a value to default?
-	if {[llength [info level 0]] == 5} {set var $deflt}
-	return 0
-    }
-}
-
-
-# ::etcd::XOpts -- Separate options and arguments
-#
-#       This utility procedure separates the options from the
-#       arguments.  Options are dash-led (sometimes with a value)
-#       while arguments will typically be blindly passed to the
-#       server.  Whenever a -- (double dash) is present, it marks the
-#       end of the options and the beginning of the arguments,
-#       allowing arguments to contain dash and have the same value as
-#       the options, if necessary.  At return time, the first variable
-#       will contain the list of arguments, while the second will
-#       contain the list of options.  This procedure supposes that the
-#       next step is to consecutively run GetOpt on the second
-#       variable.  When no -- is present, both variables will be made
-#       aliases in the calling frame, so that modifying the list of
-#       options also modifies the list of arguments.
-#
-# Arguments:
-#	_argv	Pointer to list of incoming arguments
-#	_opts	Pointer to list of options
-#
-# Results:
-#       None.
-#
-# Side Effects:
-#       None.
-proc ::etcd::XOpts {_argv _opts} {
-    upvar $_argv argv
-    set i [lsearch -exact  $argv --]
-    if { $i >= 0 } {
-	upvar $_opts opts
-	set opts [lrange $argv [expr {$i+1}] end]
-	set argv [lrange $argv 0 [expr {$i-1}]]
-    } else {
-	uplevel upvar 0 $_argv $_opts
-    }
-}
-
-
-# ::etcd::Identifier -- Create an identifier
-#
-#       Create a unique identifier within this namespace.
-#
-# Arguments:
-#	pfx	String to prefix to the name of the identifier
-#
-# Results:
-#       A unique identifier
-#
-# Side Effects:
-#       None.
-proc ::etcd::Identifier { {pfx "" } } {
-    variable ETCD
-    
-    set unique [incr ETCD(idGene)]
-    ::append unique [expr {[clock clicks -milliseconds] % $ETCD(idClamp)}]
-    return [format "[namespace current]::${pfx}%.$ETCD(idFormat)d" $unique]
-}
-
-
-# ::etcd::WebOp -- ETCD compatible Web API call
-#
-#       This will call a running instance of the etcd daemon and
-#       return the result of the operation.  If a timeout was
-#       associated to the connection context, it will be used to
-#       ensure that the remote call ends.  This procedure
-#       automatically stores the successfull or erroneous results sent
-#       back by the remote etcd to ease introspection and analysis
-#       whenver necessary.
-#
-# Arguments:
-#	cx	Connection context as return by ::new
-#	op	HTTP method to call (GET, PUT, DELETE, etc.)
-#	path	Path *after* keys namespace for call
-#	args	List of key value pairs used to format the query
-#
-# Results:
-#       Return an error on failure, or the data that was acquired from
-#       the remote etcd server.
-#
-# Side Effects:
-#       None.
-proc ::etcd::WebOp { cx op path args } {
-    variable ETCD
+    set cx [Identifier etcd]
     upvar \#0 $cx C
-
-    set op [string toupper $op]
-
-    # Create the base URL using the protocol, host and port from the
-    # context, but also the version prefix and the path passed as an
-    # argument.
-    set url "$C(-proto)://$C(-host):$C(-port)/[string trim $ETCD(version) /]/"
-    append url [string trimleft $path "/"]
-    
-    # Construct the query using the remaining of the argumnets, if
-    # any.
-    set qry ""
-    if { [llength $args] > 0 } {
-	set qry [eval ::http::formatQuery $args]
+    foreach k [array names ETCD -*] {
+	GetOpt args $k C($k) $ETCD($k)
     }
+    Log 5 "Created connection to etcd at $C(-host):$C(-port)"
+    set C(lastData) ""
 
-    # When we have a query and the operation is not PUT/POST append
-    # the query to the URL.
-    if { $qry ne "" && [lsearch [list PUT POST] $op] < 0 } {
-	append url ?
-	append url $qry
-	set qry "";   # Mark that we've used it to ensure proper test later
-    }
-
-    Log 4 "Preparing to execute API call $url"
-    
-    # Start constructing a command that will get the URL, using the
-    # timeout that is associated to the connection context.
-    set cmd [list \
-		 ::http::geturl $url \
-		 -method $op]
-    if { $C(-timeout) >= 0 } {
-	lappend cmd -timeout $C(-timeout)
-    }
-    if { [string is true $C(-keepalive)] } {
-	lappend cmd -keepalive 1
-    } else {
-	lappend cmd -keepalive 0
-    }
-
-    # Tell the command to perform a query if we still have a query,
-    # i.e. if the operation was PUT or POST.
-    if { $qry ne "" } {
-	lappend cmd -query $qry
-    }
-
-    # Now execute the command and analyse result based on return
-    # codes.
-    if { [catch {eval $cmd} tok] == 0 } {
-	set ncode [::http::ncode $tok]
-	if { $ncode >= 200 && $ncode < 300 } {
-	    # Anything that is 2XX is a success (201 is sometimes
-	    # returned for example).
-	    set C(lastData) [string trim [::http::data $tok]]
-	    ::http::cleanup $tok
-	    Log 6 "Received $ncode response: $C(lastData)"
-	    return $C(lastData)
-	} else {
-	    # Otherwise we have an error.
-	    set err [::http::error $tok]
-	    set C(lastData) [string trim [::http::data $tok]]
-	    Log 3 "Error; code: $ncode, error: $err, data: $C(lastData)"
-	    ::http::cleanup $tok
-	    set errMsg "Error when accessing $url: $err (code: $ncode)\
-                        data: $C(lastData)"
-	    # Better mediate error from etcd whenever possible.
-	    if { [catch {::etcd::json::parse $C(lastData)} d] == 0 } {
-		if { [dict exists $d errorCode] } {
-		    set errMsg "etcd API error: [dict get $d message],\
-                                code [dict get $d errorCode]"
-		}
-	    }
-	    return -code error $errMsg
-	}
-    } else {
-	return -code error "Could not contact etcd at $C(-host):$C(-port): $tok"
-    }
-    return ""
+    return $cx
 }
 
+
+# ::etcd::find -- Find existing and matching contexts
+#
+#       Finds the list of existing context that match the arguments.
+#       The arguments are in the form of dash-led options and their
+#       values.  The options should be similar to the option used for
+#       context creation, the values are glob-style patterns.
+#
+# Arguments:
+#	args	See description above
+#
+# Results:
+#       The list of matching contexts, empty if none.
+#
+# Side Effects:
+#       None.
+proc ::etcd::find { args } {
+    variable ETCD
+
+    set found [list]
+    foreach cx [info vars [namespace current]::etcd*] {
+	upvar \#0 $cx C
+	set match 1
+	foreach {k v} $args {
+	    if { [info exist C($k)] && ![string match $v $C($k)] } {
+		set match 0
+	    }
+	}
+	if { $match } {
+	    lappend found $cx
+	}
+    }
+    return $found
+}
 
 
 # ::etcd::read -- Get value of a key/dir
@@ -496,6 +351,396 @@ proc ::etcd::rmdir { cx key {recur 0} } {
 }
 
 
+# ::etcd::glob -- List directory content (recursively)
+#
+#       (Recursively) traverse a directory for keys and directories
+#       which names match the pattern passed as an argument.  This
+#       procedure will return a 3-ary list where the triplets are
+#       composed as follows: First item is the full path to the
+#       directory or key; second item is a boolean telling if this is
+#       a directory (1) or a regular key (0); last item is the value
+#       of the key (if relevant, otherwise, this will be an empty
+#       string).
+#
+# Arguments:
+#	cx	Connection context as returned by new
+#	dir	Hierarchical path to directory
+#	recur	Should deletion be recursive?
+#	ptn	Pattern to match against directory and key names
+#
+# Results:
+#       Return a 3-ary list, as described above.
+#
+# Side Effects:
+#       None.
+proc ::etcd::glob { cx dir {recur 0} {ptn *} } {
+    if { $recur } {
+	set d [::etcd::json::parse [read $cx $dir -raw recursive true]]
+    } else {
+	set d [::etcd::json::parse [read $cx $dir -raw]]
+    }
+    return [Recurse [dict get $d node] $ptn]
+}
+
+
+# ::etcd::latest -- Return latest data from etcd
+#
+#       Return the lastest raw data returned by etcd in raw (JSON most
+#       of the time) format.  This data is reset at each API call.
+#
+# Arguments:
+#	cx	Connection context as returned by new
+#
+# Results:
+#       Latest raw data from etcd server
+#
+# Side Effects:
+#       None.
+proc ::etcd::data { cx } {
+    variable ETCD
+    upvar \#0 $cx C
+    return $C(lastData)
+}
+
+
+# ::etcd::logger -- Set logger command
+#
+#       Arrange for a command to receive logging messages.  The
+#       command will receive two more arguments which will be the
+#       integer logging level and the message.  Lower numbers are for
+#       critical messages, the higher the number is, the less
+#       important it is.
+#
+# Arguments:
+#	cmd	New log command, empty to revert to dump on stderr.
+#
+# Results:
+#       None.
+#
+# Side Effects:
+#       None.
+proc ::etcd::logger { { cmd "" } } {
+    variable ETCD
+    set ETCD(logger) $cmd
+}
+
+
+# ::etcd::verbosity -- Get or Set verbosity
+#
+#       Get or set the verbosity level of the module.  By default,
+#       unless this is changed, the module will be totally silent.
+#       But verbosity can be turned up for debugging purposes.
+#
+# Arguments:
+#	lvl	New level to set (a positive integer, or a recognised string)
+#
+# Results:
+#       The resulting level that was set, or an error.  When called
+#       with no argument or an empty level (or a negative level), this
+#       will be returning the current level.
+#
+# Side Effects:
+#       Will output timestamped messages on stderr, unless a log
+#       command is specified.
+proc ::etcd::verbosity { {lvl -1} } {
+    variable ETCD
+
+    if { $lvl >= 0 || $lvl ne "" } {
+	set lvl [LogLevel $lvl]
+	if { $lvl < 0 } { 
+	    return -code error "Verbosity level $lvl not recognised"
+	}
+	set ETCD(verbose) $lvl
+    }
+    return $ETCD(verbose)
+}
+
+
+####################################################################
+#
+# Procedures below are internal to the implementation, they shouldn't
+# be changed unless you wish to help...
+#
+####################################################################
+
+
+# ::etcd::LogLevel -- Convert log levels
+#
+#       For convenience, log levels can also be expressed using
+#       human-readable strings.  This procedure will convert from this
+#       format to the internal integer format.
+#
+# Arguments:
+#	lvl	Log level (integer or string).
+#
+# Results:
+#       Log level in integer format, -1 if it could not be converted.
+#
+# Side Effects:
+#       None.
+proc ::etcd::LogLevel { lvl } {
+    variable ETCD
+
+    if { ![string is integer $lvl] } {
+	foreach {l str} $ETCD(verboseTags) {
+	    if { [string match -nocase $str $lvl] } {
+		return $l
+	    }
+	}
+	return -1
+    }
+    return $lvl
+}
+
+
+# ::etcd::Log -- Conditional Log output
+#
+#       This procedure will output the message passed as a parameter
+#       if the logging level of the module is set higher than the
+#       level of the message.  The level can either be expressed as an
+#       integer (preferred) or a string pattern.
+#
+# Arguments:
+#	lvl	Log level (integer or string).
+#	msg	Message
+#
+# Results:
+#       None.
+#
+# Side Effects:
+#       Will either callback the logger command or output on stderr
+#       whenever the logging level allows.
+proc ::etcd::Log { lvl msg } {
+    variable ETCD
+
+    # Convert to integer
+    set lvl [LogLevel $lvl]
+    
+    # If we should output, either pass to the global logger command or
+    # output a message onto stderr.
+    if { [LogLevel $ETCD(verbose)] >= $lvl } {
+	if { $ETCD(logger) ne "" } {
+	    # Be sure we didn't went into problems...
+	    if { [catch {eval [linsert $ETCD(logger) end $lvl $msg]} err] } {
+		puts $ETCD(logd) "Could not callback logger command: $err"
+	    }
+	} else {
+	    # Convert the integer level to something easier to
+	    # understand and output onto ETCD(logd) (which is stderr,
+	    # unless this has been modified)
+	    array set T $ETCD(verboseTags)
+	    if { [info exists T($lvl)] } {
+		set log [string map [list %level% $T($lvl)] \
+			     $ETCD(dateLogHeader)]
+		set log [clock format [clock seconds] -format $log]
+		append log $msg
+		puts $ETCD(logd) $log
+	    }
+	}
+    }
+}
+
+
+# ::etcd::GetOpt -- Quick and Dirty Options Parser
+#
+#       Parses options, code comes from wiki
+#
+# Arguments:
+#	_argv	"pointer" to options list to parse from
+#	name	Name of option to find
+#	_var	"pointer" to where to place the value
+#	deflt	Default value if not found
+#
+# Results:
+#       1 if the option was found, 0 otherwise.
+#
+# Side Effects:
+#       Modifies the argv option list.
+proc ::etcd::GetOpt {_argv name {_var ""} {deflt ""}} {
+    upvar $_argv argv $_var var
+    set pos [lsearch -regexp $argv ^$name]
+    if {$pos>=0} {
+	set to $pos
+	if {$_var ne ""} {
+	    set var [lindex $argv [incr to]]
+	}
+	set argv [lreplace $argv $pos $to]
+	return 1
+    } else {
+	# Did we provide a value to default?
+	if {[llength [info level 0]] == 5} {set var $deflt}
+	return 0
+    }
+}
+
+
+# ::etcd::XOpts -- Separate options and arguments
+#
+#       This utility procedure separates the options from the
+#       arguments.  Options are dash-led (sometimes with a value)
+#       while arguments will typically be blindly passed to the
+#       server.  Whenever a -- (double dash) is present, it marks the
+#       end of the options and the beginning of the arguments,
+#       allowing arguments to contain dash and have the same value as
+#       the options, if necessary.  At return time, the first variable
+#       will contain the list of arguments, while the second will
+#       contain the list of options.  This procedure supposes that the
+#       next step is to consecutively run GetOpt on the second
+#       variable.  When no -- is present, both variables will be made
+#       aliases in the calling frame, so that modifying the list of
+#       options also modifies the list of arguments.
+#
+# Arguments:
+#	_argv	Pointer to list of incoming arguments
+#	_opts	Pointer to list of options
+#
+# Results:
+#       None.
+#
+# Side Effects:
+#       None.
+proc ::etcd::XOpts {_argv _opts} {
+    upvar $_argv argv
+    set i [lsearch -exact  $argv --]
+    if { $i >= 0 } {
+	upvar $_opts opts
+	set opts [lrange $argv [expr {$i+1}] end]
+	set argv [lrange $argv 0 [expr {$i-1}]]
+    } else {
+	uplevel upvar 0 $_argv $_opts
+    }
+}
+
+
+# ::etcd::Identifier -- Create an identifier
+#
+#       Create a unique identifier within this namespace.
+#
+# Arguments:
+#	pfx	String to prefix to the name of the identifier
+#
+# Results:
+#       A unique identifier
+#
+# Side Effects:
+#       None.
+proc ::etcd::Identifier { {pfx "" } } {
+    variable ETCD
+    
+    set unique [incr ETCD(idGene)]
+    ::append unique [expr {[clock clicks -milliseconds] % $ETCD(idClamp)}]
+    return [format "[namespace current]::${pfx}%.$ETCD(idFormat)d" $unique]
+}
+
+
+# ::etcd::WebOp -- ETCD compatible Web API call
+#
+#       This will call a running instance of the etcd daemon and
+#       return the result of the operation.  If a timeout was
+#       associated to the connection context, it will be used to
+#       ensure that the remote call ends.  This procedure
+#       automatically stores the successfull or erroneous results sent
+#       back by the remote etcd to ease introspection and analysis
+#       whenver necessary.
+#
+# Arguments:
+#	cx	Connection context as return by ::new
+#	op	HTTP method to call (GET, PUT, DELETE, etc.)
+#	path	Path *after* keys namespace for call
+#	args	List of key value pairs used to format the query
+#
+# Results:
+#       Return an error on failure, or the data that was acquired from
+#       the remote etcd server.
+#
+# Side Effects:
+#       None.
+proc ::etcd::WebOp { cx op path args } {
+    variable ETCD
+    upvar \#0 $cx C
+
+    set op [string toupper $op]
+
+    # Create the base URL using the protocol, host and port from the
+    # context, but also the version prefix and the path passed as an
+    # argument.
+    set url "$C(-proto)://$C(-host):$C(-port)/[string trim $ETCD(version) /]/"
+    append url [string trimleft $path "/"]
+    
+    # Construct the query using the remaining of the argumnets, if
+    # any.
+    set qry ""
+    if { [llength $args] > 0 } {
+	set qry [eval ::http::formatQuery $args]
+    }
+
+    # When we have a query and the operation is not PUT/POST append
+    # the query to the URL.
+    if { $qry ne "" && [lsearch [list PUT POST] $op] < 0 } {
+	append url ?
+	append url $qry
+	set qry "";   # Mark that we've used it to ensure proper test later
+    }
+
+    Log NOTICE "Preparing to execute API call $url"
+    
+    # Start constructing a command that will get the URL, using the
+    # timeout that is associated to the connection context.
+    set cmd [list \
+		 ::http::geturl $url \
+		 -method $op]
+    if { $C(-timeout) >= 0 } {
+	lappend cmd -timeout $C(-timeout)
+    }
+    if { [string is true $C(-keepalive)] } {
+	lappend cmd -keepalive 1
+    } else {
+	lappend cmd -keepalive 0
+    }
+
+    # Tell the command to perform a query if we still have a query,
+    # i.e. if the operation was PUT or POST.
+    if { $qry ne "" } {
+	lappend cmd -query $qry
+    }
+
+    # Now execute the command and analyse result based on return
+    # codes.
+    if { [catch {eval $cmd} tok] == 0 } {
+	set ncode [::http::ncode $tok]
+	if { $ncode >= 200 && $ncode < 300 } {
+	    # Anything that is 2XX is a success (201 is sometimes
+	    # returned for example).
+	    set C(lastData) [string trim [::http::data $tok]]
+	    ::http::cleanup $tok
+	    Log 6 "Received $ncode response: $C(lastData)"
+	    return $C(lastData)
+	} else {
+	    # Otherwise we have an error.
+	    set err [::http::error $tok]
+	    set C(lastData) [string trim [::http::data $tok]]
+	    Log 3 "Error; code: $ncode, error: $err, data: $C(lastData)"
+	    ::http::cleanup $tok
+	    set errMsg "Error when accessing $url: $err (code: $ncode)\
+                        data: $C(lastData)"
+	    # Better mediate error from etcd whenever possible.
+	    if { [catch {::etcd::json::parse $C(lastData)} d] == 0 } {
+		if { [dict exists $d errorCode] } {
+		    set errMsg "etcd API error: [dict get $d message],\
+                                code [dict get $d errorCode]"
+		}
+	    }
+	    return -code error $errMsg
+	}
+    } else {
+	return -code error "Could not contact etcd at $C(-host):$C(-port): $tok"
+    }
+    return ""
+}
+
+
+
+
 # ::etcd::Unwind -- Convert JSON data to descriptive triplets
 #
 #       Convert parts of the answer from recursive directory
@@ -559,129 +804,6 @@ proc ::etcd::Recurse { d ptn } {
     } else {
 	return [Unwind $d $ptn]
     }
-}
-
-
-# ::etcd::glob -- List directory content (recursively)
-#
-#       (Recursively) traverse a directory for keys and directories
-#       which names match the pattern passed as an argument.  This
-#       procedure will return a 3-ary list where the triplets are
-#       composed as follows: First item is the full path to the
-#       directory or key; second item is a boolean telling if this is
-#       a directory (1) or a regular key (0); last item is the value
-#       of the key (if relevant, otherwise, this will be an empty
-#       string).
-#
-# Arguments:
-#	cx	Connection context as returned by new
-#	dir	Hierarchical path to directory
-#	recur	Should deletion be recursive?
-#	ptn	Pattern to match against directory and key names
-#
-# Results:
-#       Return a 3-ary list, as described above.
-#
-# Side Effects:
-#       None.
-proc ::etcd::glob { cx dir {recur 0} {ptn *} } {
-    if { $recur } {
-	set d [::etcd::json::parse [read $cx $dir -raw recursive true]]
-    } else {
-	set d [::etcd::json::parse [read $cx $dir -raw]]
-    }
-    return [Recurse [dict get $d node] $ptn]
-}
-
-
-# ::etcd::new -- Create new connection context
-#
-#       Create a new connection context to a remote etcd server.  At
-#       present, there is no active attempt to connect to the server
-#       to check for capabilities or similar.  This procedure can take
-#       a number of dash-led options and their values as arguments.
-#       These options are:
-#       -host    The hostname of the remote server (default: localhost)
-#       -port    The port number at the remote server (default: 4001)
-#       -proto   http or https
-#       -timeout Timeout when talking to server, in ms. Negative to turn off.
-#
-# Arguments:
-#	args	List of dash-led options and their values, as described above.
-#
-# Results:
-#       Return the identifier of the connection context to be used in
-#       all further calls to this library.
-#
-# Side Effects:
-#       None.
-proc ::etcd::new { args } {
-    variable ETCD
-
-    set cx [Identifier etcd]
-    upvar \#0 $cx C
-    foreach k [array names ETCD -*] {
-	GetOpt args $k C($k) $ETCD($k)
-    }
-    Log 5 "Created connection to etcd at $C(-host):$C(-port)"
-    set C(lastData) ""
-
-    return $cx
-}
-
-
-# ::etcd::find -- Find existing and matching contexts
-#
-#       Finds the list of existing context that match the arguments.
-#       The arguments are in the form of dash-led options and their
-#       values.  The options should be similar to the option used for
-#       context creation, the values are glob-style patterns.
-#
-# Arguments:
-#	args	See description above
-#
-# Results:
-#       The list of matching contexts, empty if none.
-#
-# Side Effects:
-#       None.
-proc ::etcd::find { args } {
-    variable ETCD
-
-    set found [list]
-    foreach cx [info vars [namespace current]::etcd*] {
-	upvar \#0 $cx C
-	set match 1
-	foreach {k v} $args {
-	    if { [info exist C($k)] && ![string match $v $C($k)] } {
-		set match 0
-	    }
-	}
-	if { $match } {
-	    lappend found $cx
-	}
-    }
-    return $found
-}
-
-
-# ::etcd::latest -- Return latest data from etcd
-#
-#       Return the lastest raw data returned by etcd in raw (JSON most
-#       of the time) format.  This data is reset at each API call.
-#
-# Arguments:
-#	cx	Connection context as returned by new
-#
-# Results:
-#       Latest raw data from etcd server
-#
-# Side Effects:
-#       None.
-proc ::etcd::data { cx } {
-    variable ETCD
-    upvar \#0 $cx C
-    return $C(lastData)
 }
 
 
