@@ -8,5 +8,5 @@
 # script is sourced, the variable $dir must contain the
 # full path name of this file's directory.
 
-package ifneeded etcd 0.1 [list source [file join $dir etcd.tcl]]
+package ifneeded etcd 0.2 [list source [file join $dir etcd.tcl]]
 package ifneeded etcd::json 1.0 [list source [file join $dir json.tcl]]

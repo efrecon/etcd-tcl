@@ -26,15 +26,41 @@ namespace eval ::etcd {
 	    idClamp        10000
 	    idFormat       7
 	    version        "v2"
+	    verbose        0
+	    verboseTags    {1 CRITICAL 2 ERROR 3 WARN 4 NOTICE 5 INFO 6 DEBUG}
 	    -host          127.0.0.1
 	    -port          4001
 	    -proto         http
 	    -timeout       30000
+	    -keepalive     on
 	}
-	variable version 0.1
+	variable version 0.2
 	variable libdir [file dirname [file normalize [info script]]]
     }
+    namespace export {[a-z]*}
+    namespace ensemble create
 }
+
+proc ::etcd::Log { lvl msg } {
+    variable ETCD
+
+    if { ![string is integer $lvl] } {
+	foreach {l str} [concat $ETCD(verboseTags) 0 *] {
+	    if { [string match -nocase $str $lvl] } {
+		set lvl $l
+		break
+	    }
+	}
+    }
+		
+    if { $ETCD(verbose) >= $lvl } {
+	array set T $ETCD(verboseTags)
+	if { [info exists T($lvl)] } {
+	    puts stderr "\[$T($lvl)\] $msg"
+	}
+    }
+}
+
 
 # ::etcd::GetOpt -- Quick and Dirty Options Parser
 #
@@ -124,7 +150,7 @@ proc ::etcd::Identifier { {pfx "" } } {
     
     set unique [incr ETCD(idGene)]
     ::append unique [expr {[clock clicks -milliseconds] % $ETCD(idClamp)}]
-    return [format "${pfx}%.$ETCD(idFormat)d" $unique]
+    return [format "[namespace current]::${pfx}%.$ETCD(idFormat)d" $unique]
 }
 
 
@@ -177,12 +203,20 @@ proc ::etcd::WebOp { cx op path args } {
 	set qry "";   # Mark that we've used it to ensure proper test later
     }
 
+    Log 4 "Preparing to execute API call $url"
+    
     # Start constructing a command that will get the URL, using the
     # timeout that is associated to the connection context.
-    set cmd [list ::http::geturl $url \
+    set cmd [list \
+		 ::http::geturl $url \
 		 -method $op]
     if { $C(-timeout) >= 0 } {
 	lappend cmd -timeout $C(-timeout)
+    }
+    if { [string is true $C(-keepalive)] } {
+	lappend cmd -keepalive 1
+    } else {
+	lappend cmd -keepalive 0
     }
 
     # Tell the command to perform a query if we still have a query,
@@ -200,11 +234,13 @@ proc ::etcd::WebOp { cx op path args } {
 	    # returned for example).
 	    set C(lastData) [::http::data $tok]
 	    ::http::cleanup $tok
+	    Log 6 "Received $ncode response: $C(lastData)"
 	    return $C(lastData)
 	} else {
 	    # Otherwise we have an error.
 	    set err [::http::error $tok]
 	    set C(lastData) [::http::data $tok]
+	    Log 3 "Error; code: $ncode, error: $err, data: $C(lastData)"
 	    ::http::cleanup $tok
 	    set errMsg "Error when accessing $url: $err (code: $ncode)\
                         data: $C(lastData)"
@@ -587,9 +623,45 @@ proc ::etcd::new { args } {
     foreach k [array names ETCD -*] {
 	GetOpt args $k C($k) $ETCD($k)
     }
+    Log 5 "Created connection to etcd at $C(-host):$C(-port)"
     set C(lastData) ""
 
     return $cx
+}
+
+
+# ::etcd::find -- Find existing and matching contexts
+#
+#       Finds the list of existing context that match the arguments.
+#       The arguments are in the form of dash-led options and their
+#       values.  The options should be similar to the option used for
+#       context creation, the values are glob-style patterns.
+#
+# Arguments:
+#	args	See description above
+#
+# Results:
+#       The list of matching contexts, empty if none.
+#
+# Side Effects:
+#       None.
+proc ::etcd::find { args } {
+    variable ETCD
+
+    set found [list]
+    foreach cx [info vars [namespace current]::etcd*] {
+	upvar \#0 $cx C
+	set match 1
+	foreach {k v} $args {
+	    if { [info exist C($k)] && ![string match $v $C($k)] } {
+		set match 0
+	    }
+	}
+	if { $match } {
+	    lappend found $cx
+	}
+    }
+    return $found
 }
 
 
