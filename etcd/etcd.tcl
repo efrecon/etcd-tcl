@@ -147,7 +147,7 @@ proc ::etcd::read { cx key args } {
 
     # Do API call
     set json [eval [linsert $args 0 \
-			WebOp $cx GET keys/[string trimleft $key /]]]
+			WebOp $cx "" GET keys/[string trimleft $key /]]]
     if { $raw } {
 	return $json
     } else {
@@ -208,10 +208,10 @@ proc ::etcd::write { cx key val args } {
 
     if { $noval } {
 	set json [eval [linsert $args 0 \
-			    WebOp $cx PUT keys/[string trimleft $key /]]]
+			    WebOp $cx "" PUT keys/[string trimleft $key /]]]
     } else {
 	set json [eval [linsert $args 0 \
-			    WebOp $cx PUT keys/[string trimleft $key /] \
+			    WebOp $cx "" PUT keys/[string trimleft $key /] \
 			    value $val]]
     }
 
@@ -259,7 +259,7 @@ proc ::etcd::delete { cx key args } {
     set raw [GetOpt opts -raw]
 
     set json [eval [linsert $args 0 \
-			WebOp $cx DELETE keys/[string trimleft $key /]]]
+			WebOp $cx "" DELETE keys/[string trimleft $key /]]]
     if { $raw } {
 	return $json
     } else {
@@ -286,7 +286,7 @@ proc ::etcd::delete { cx key args } {
 # Side Effects:
 #       None.
 proc ::etcd::machines { cx } {
-    return [WebOp $cx GET machines]
+    return [WebOp $cx "" GET machines]
 }
 
 
@@ -304,7 +304,7 @@ proc ::etcd::machines { cx } {
 # Side Effects:
 #       None.
 proc ::etcd::leader { cx } {
-    return [WebOp $cx GET machines]
+    return [WebOp $cx "" GET machines]
 }
 
 # ::etcd::mkdir -- Create a directory
@@ -636,6 +636,29 @@ proc ::etcd::Identifier { {pfx "" } } {
 }
 
 
+proc ::etcd::WebErr { cx tok } {
+    variable ETCD
+    upvar \#0 $cx C
+
+    # Otherwise we have an error.
+    set err [::http::error $tok]
+    set C(lastData) [string trim [::http::data $tok]]
+    Log 3 "HTTP Error:: code: $ncode, error: $err, data: $C(lastData)"
+    ::http::cleanup $tok
+    set errMsg "Error when accessing $url: $err (code: $ncode)\
+                data: $C(lastData)"
+    # Better mediate error from etcd whenever possible.
+    if { [catch {::etcd::json::parse $C(lastData)} d] == 0 } {
+	if { [dict exists $d errorCode] } {
+	    set errMsg "etcd API error: [dict get $d message],\
+                        code [dict get $d errorCode]"
+	}
+    }
+
+    return $errMsg
+}
+
+
 # ::etcd::WebOp -- ETCD compatible Web API call
 #
 #       This will call a running instance of the etcd daemon and
@@ -648,6 +671,7 @@ proc ::etcd::Identifier { {pfx "" } } {
 #
 # Arguments:
 #	cx	Connection context as return by ::new
+#	url	URL to make the API call at (empty to generate from cx and args)
 #	op	HTTP method to call (GET, PUT, DELETE, etc.)
 #	path	Path *after* keys namespace for call
 #	args	List of key value pairs used to format the query
@@ -658,7 +682,7 @@ proc ::etcd::Identifier { {pfx "" } } {
 #
 # Side Effects:
 #       None.
-proc ::etcd::WebOp { cx op path args } {
+proc ::etcd::WebOp { cx url op path args } {
     variable ETCD
     upvar \#0 $cx C
 
@@ -667,8 +691,10 @@ proc ::etcd::WebOp { cx op path args } {
     # Create the base URL using the protocol, host and port from the
     # context, but also the version prefix and the path passed as an
     # argument.
-    set url "$C(-proto)://$C(-host):$C(-port)/[string trim $ETCD(version) /]/"
-    append url [string trimleft $path "/"]
+    if { $url eq "" } {
+	set url "$C(-proto)://$C(-host):$C(-port)/[string trim $ETCD(version) /]/"
+	append url [string trimleft $path "/"]
+    }
     
     # Construct the query using the remaining of the argumnets, if
     # any.
@@ -718,22 +744,17 @@ proc ::etcd::WebOp { cx op path args } {
 	    ::http::cleanup $tok
 	    Log 6 "Received $ncode response: $C(lastData)"
 	    return $C(lastData)
-	} else {
-	    # Otherwise we have an error.
-	    set err [::http::error $tok]
-	    set C(lastData) [string trim [::http::data $tok]]
-	    Log 3 "Error; code: $ncode, error: $err, data: $C(lastData)"
-	    ::http::cleanup $tok
-	    set errMsg "Error when accessing $url: $err (code: $ncode)\
-                        data: $C(lastData)"
-	    # Better mediate error from etcd whenever possible.
-	    if { [catch {::etcd::json::parse $C(lastData)} d] == 0 } {
-		if { [dict exists $d errorCode] } {
-		    set errMsg "etcd API error: [dict get $d message],\
-                                code [dict get $d errorCode]"
-		}
+	} elseif { $ncode == 307 } {
+	    # Follow redirect
+	    array set R [::http::meta $tok]
+	    if { [info exists R(Location)] } {
+		Log NOTICE "Redirected to $R(location)"
+		return [WebOp $cx $R(Location) $op $path]
+	    } else {
+		return -code error [WebErr $cx $tok]
 	    }
-	    return -code error $errMsg
+	} else {
+	    return -code error [WebErr $cx $tok]
 	}
     } else {
 	return -code error "Could not contact etcd at $C(-host):$C(-port): $tok"
