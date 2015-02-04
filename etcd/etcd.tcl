@@ -745,11 +745,13 @@ proc ::etcd::WebOp { cx url op path args } {
 	    Log 6 "Received $ncode response: $C(lastData)"
 	    return $C(lastData)
 	} elseif { $ncode == 307 } {
-	    # Follow redirect
+	    # Follow redirection, keep the list of arguments that were
+	    # given to us when redirecting.  There is no limit to
+	    # recursion at this point.
 	    array set R [::http::meta $tok]
 	    if { [info exists R(Location)] } {
-		Log NOTICE "Redirected to $R(location)"
-		return [WebOp $cx $R(Location) $op $path]
+		Log NOTICE "Redirected to $R(Location)"
+		return [eval [linsert $args 0 WebOp $cx $R(Location) $op $path]]
 	    } else {
 		return -code error [WebErr $cx $tok]
 	    }
