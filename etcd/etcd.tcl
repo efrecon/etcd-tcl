@@ -29,7 +29,7 @@ namespace eval ::etcd {
 	    logger         ""
 	    version        "v2"
 	    verbose        0
-	    dateLogHeader  "\[%Y%m%d %H%M%S\] \[%level%\] "
+	    dateLogHeader  "\[%Y%m%d %H%M%S\] \[%module%\] \[%level%\] "
 	    verboseTags    {1 CRITICAL 2 ERROR 3 WARN 4 NOTICE 5 INFO 6 DEBUG}
 	    -host          127.0.0.1
 	    -port          4001
@@ -530,7 +530,10 @@ proc ::etcd::Log { lvl msg } {
 	    # unless this has been modified)
 	    array set T $ETCD(verboseTags)
 	    if { [info exists T($lvl)] } {
-		set log [string map [list %level% $T($lvl)] \
+		set log [string map [list \
+					 %level% $T($lvl) \
+					 %module% [string trim \
+						       [namespace current] :]] \
 			     $ETCD(dateLogHeader)]
 		set log [clock format [clock seconds] -format $log]
 		append log $msg
