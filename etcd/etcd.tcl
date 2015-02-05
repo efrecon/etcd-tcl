@@ -641,6 +641,7 @@ proc ::etcd::WebErr { cx tok } {
     upvar \#0 $cx C
 
     # Otherwise we have an error.
+    set ncode [::http::ncode $tok]
     set err [::http::error $tok]
     set C(lastData) [string trim [::http::data $tok]]
     Log 3 "HTTP Error:: code: $ncode, error: $err, data: $C(lastData)"
