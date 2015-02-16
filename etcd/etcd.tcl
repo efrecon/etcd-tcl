@@ -646,7 +646,7 @@ proc ::etcd::WebErr { cx tok } {
     set C(lastData) [string trim [::http::data $tok]]
     Log 3 "HTTP Error:: code: $ncode, error: $err, data: $C(lastData)"
     ::http::cleanup $tok
-    set errMsg "Error when accessing $url: $err (code: $ncode)\
+    set errMsg "Error when accessing etcd: $err (code: $ncode)\
                 data: $C(lastData)"
     # Better mediate error from etcd whenever possible.
     if { [catch {::etcd::json::parse $C(lastData)} d] == 0 } {
